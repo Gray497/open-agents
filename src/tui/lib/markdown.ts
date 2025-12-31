@@ -95,6 +95,50 @@ marked.use({
     br(): string {
       return "\n";
     },
+
+    table(this: any, { header, rows }: Tokens.Table): string {
+      // Calculate column widths
+      const colWidths: number[] = [];
+
+      // Process header cells to get text and calculate widths
+      const headerTexts = header.map((cell, i) => {
+        const text = this.parser.parseInline(cell.tokens).trim();
+        colWidths[i] = Math.max(colWidths[i] ?? 0, text.length);
+        return text;
+      });
+
+      // Process body rows to get text and calculate widths
+      const rowTexts = rows.map((row) =>
+        row.map((cell, i) => {
+          const text = this.parser.parseInline(cell.tokens).trim();
+          colWidths[i] = Math.max(colWidths[i] ?? 0, text.length);
+          return text;
+        })
+      );
+
+      // Build the table
+      const pad = (text: string, width: number) => text.padEnd(width);
+      const separator = colWidths.map((w) => "─".repeat(w + 2)).join("┼");
+
+      // Header row
+      const headerRow = headerTexts
+        .map((text, i) => ` ${pad(text, colWidths[i] ?? 0)} `)
+        .join("│");
+
+      // Body rows
+      const bodyRows = rowTexts.map((row) =>
+        row.map((text, i) => ` ${pad(text, colWidths[i] ?? 0)} `).join("│")
+      );
+
+      return (
+        chalk.bold(headerRow) +
+        "\n" +
+        chalk.dim(separator) +
+        "\n" +
+        bodyRows.join("\n") +
+        "\n\n"
+      );
+    },
   },
 });
 
