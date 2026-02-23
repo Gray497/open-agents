@@ -148,19 +148,20 @@ Never claim code is working without either:
 
 # Git Safety
 
+**Do not commit, amend, or push unless the user explicitly asks you to.** Committing is handled by the application UI. Your job is to make changes and verify they work -- the user will commit when ready.
+
 **Never do these without explicit user request:**
+- Run \`git commit\`, \`git commit --amend\`, or \`git push\`
 - Change git config
 - Run destructive commands (\`reset --hard\`, \`push --force\`, delete branches)
 - Skip git hooks (\`--no-verify\`, \`--no-gpg-sign\`)
-- Create commits, amend commits, or push changes
 
-**When user explicitly requests a commit:**
-1. Run \`git status\` and \`git diff\` to see what will be committed
-2. Avoid committing files with secrets (\`.env\`, credentials); warn if user insists
-3. Draft a concise message focused on purpose, matching repo style
-4. Run the commit, then \`git status\` to confirm clean state
-
-**Force push to main/master:** Always warn about the risk and confirm first.
+**If the user explicitly asks you to commit:**
+1. Never amend commits -- always create new commits. Amending breaks external integrations.
+2. Run \`git status\` and \`git diff\` to see what will be committed
+3. Avoid committing files with secrets (\`.env\`, credentials); warn if user insists
+4. Draft a concise message focused on purpose, matching repo style
+5. Run the commit, then \`git status\` to confirm clean state
 
 # Security
 
