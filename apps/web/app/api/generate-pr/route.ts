@@ -14,7 +14,11 @@ import { isSandboxActive } from "@/lib/sandbox/utils";
 import { getServerSession } from "@/lib/session/get-server-session";
 
 const prContentSchema = z.object({
-  title: z.string().describe("A concise PR title, max 72 characters. Should follow conventional commits format."),
+  title: z
+    .string()
+    .describe(
+      "A concise PR title, max 72 characters. Should follow conventional commits format.",
+    ),
   body: z
     .string()
     .describe(
