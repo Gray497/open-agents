@@ -4,62 +4,39 @@ import {
   Archive,
   EllipsisVertical,
   GitMerge,
+  Loader2,
   Pencil,
   Plus,
   Settings,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import type { CSSProperties } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  getValidRenameTitle,
-  isRenameSaveDisabled,
-} from "@/components/inbox-sidebar-rename";
-import { NewSessionDialog } from "@/components/new-session-dialog";
+import { InboxSidebarRenameDialog } from "@/components/inbox-sidebar-rename-dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useSession } from "@/hooks/use-session";
 import type { SessionWithUnread } from "@/hooks/use-sessions";
 import type { Session as AuthSession } from "@/lib/session/types";
-
-type CreateSessionInput = {
-  repoOwner?: string;
-  repoName?: string;
-  branch?: string;
-  cloneUrl?: string;
-  isNewBranch: boolean;
-  sandboxType: "hybrid" | "vercel" | "just-bash";
-};
 
 type InboxSidebarProps = {
   sessions: SessionWithUnread[];
   archivedCount: number;
   sessionsLoading: boolean;
   activeSessionId: string;
+  pendingSessionId: string | null;
   onSessionClick: (session: SessionWithUnread) => void;
   onSessionPrefetch: (session: SessionWithUnread) => void;
   onRenameSession: (sessionId: string, title: string) => Promise<void>;
   onArchiveSession: (sessionId: string) => Promise<void>;
-  createSession: (input: CreateSessionInput) => Promise<{
-    session: { id: string };
-    chat: { id: string };
-  }>;
-  lastRepo: { owner: string; repo: string } | null;
+  onOpenNewSession: () => void;
   initialUser?: AuthSession["user"];
 };
 
@@ -74,6 +51,11 @@ type ArchivedSessionsResponse = {
 };
 
 const ARCHIVED_SESSIONS_PAGE_SIZE = 50;
+
+const sessionRowPerformanceStyle: CSSProperties = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "3.25rem",
+};
 
 function formatRelativeTime(date: Date): string {
   const now = new Date();
@@ -147,6 +129,7 @@ function PrBadge({
 type SessionRowProps = {
   session: SessionWithUnread;
   isActive: boolean;
+  isPending: boolean;
   onSessionClick: (session: SessionWithUnread) => void;
   onSessionPrefetch: (session: SessionWithUnread) => void;
   onOpenRenameDialog: (session: SessionWithUnread) => void;
@@ -156,6 +139,7 @@ type SessionRowProps = {
 const SessionRow = memo(function SessionRow({
   session,
   isActive,
+  isPending,
   onSessionClick,
   onSessionPrefetch,
   onOpenRenameDialog,
@@ -171,9 +155,10 @@ const SessionRow = memo(function SessionRow({
 
   return (
     <div
-      className={`group relative flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors ${
+      className={`group relative flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition-[background-color,opacity] ${
         isActive ? "bg-sidebar-active" : "hover:bg-muted/50"
-      }`}
+      } ${isPending ? "opacity-80" : "opacity-100"}`}
+      style={sessionRowPerformanceStyle}
     >
       <div className="flex h-5 w-3 shrink-0 items-center justify-center">
         {isWorking ? (
@@ -190,6 +175,7 @@ const SessionRow = memo(function SessionRow({
           onMouseEnter={() => onSessionPrefetch(session)}
           onFocus={() => onSessionPrefetch(session)}
           className="block w-full text-left"
+          aria-busy={isPending}
         >
           <div className="flex items-baseline justify-between gap-2">
             <p
@@ -201,8 +187,9 @@ const SessionRow = memo(function SessionRow({
             >
               {session.title}
             </p>
-            <span className="shrink-0 text-[11px] text-muted-foreground">
-              {lastActivityLabel}
+            <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+              {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              <span>{lastActivityLabel}</span>
             </span>
           </div>
 
@@ -269,7 +256,7 @@ function areSessionRowsEqual(
   prev: SessionRowProps,
   next: SessionRowProps,
 ): boolean {
-  if (prev.isActive !== next.isActive) {
+  if (prev.isActive !== next.isActive || prev.isPending !== next.isPending) {
     return false;
   }
 
@@ -293,12 +280,12 @@ export function InboxSidebar({
   archivedCount,
   sessionsLoading,
   activeSessionId,
+  pendingSessionId,
   onSessionClick,
   onSessionPrefetch,
   onRenameSession,
   onArchiveSession,
-  createSession,
-  lastRepo,
+  onOpenNewSession,
   initialUser,
 }: InboxSidebarProps) {
   const router = useRouter();
@@ -314,12 +301,9 @@ export function InboxSidebar({
   >(null);
   const [hasMoreArchivedSessions, setHasMoreArchivedSessions] = useState(false);
   const archivedRequestInFlightRef = useRef(false);
-  const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const lastLoadedArchivedCountRef = useRef(0);
   const [renameDialogSession, setRenameDialogSession] =
     useState<SessionWithUnread | null>(null);
-  const [renameTitle, setRenameTitle] = useState("");
-  const [renaming, setRenaming] = useState(false);
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchArchivedSessionsPage = useCallback(
     async ({ offset, replace }: { offset: number; replace: boolean }) => {
@@ -356,6 +340,7 @@ export function InboxSidebar({
 
           return [...current, ...nextSessions];
         });
+        lastLoadedArchivedCountRef.current = data.archivedCount;
         setHasMoreArchivedSessions(Boolean(data.pagination?.hasMore));
       } catch (error) {
         const message =
@@ -372,13 +357,6 @@ export function InboxSidebar({
   );
 
   useEffect(() => {
-    if (renameDialogSession && renameInputRef.current) {
-      renameInputRef.current.focus();
-      renameInputRef.current.select();
-    }
-  }, [renameDialogSession]);
-
-  useEffect(() => {
     if (!showArchived) {
       return;
     }
@@ -387,6 +365,11 @@ export function InboxSidebar({
       setArchivedSessions([]);
       setHasMoreArchivedSessions(false);
       setArchivedSessionsError(null);
+      lastLoadedArchivedCountRef.current = 0;
+      return;
+    }
+
+    if (lastLoadedArchivedCountRef.current === archivedCount) {
       return;
     }
 
@@ -421,11 +404,29 @@ export function InboxSidebar({
     async (session: SessionWithUnread) => {
       try {
         await onArchiveSession(session.id);
+        setArchivedSessions((current) => {
+          const nextSessions = [
+            { ...session, status: "archived" as const },
+            ...current.filter(
+              (existingSession) => existingSession.id !== session.id,
+            ),
+          ];
+          const maxCachedSessions = Math.max(
+            current.length,
+            ARCHIVED_SESSIONS_PAGE_SIZE,
+          );
+
+          return nextSessions.slice(0, maxCachedSessions);
+        });
+        setHasMoreArchivedSessions(
+          (currentHasMore) =>
+            currentHasMore || archivedCount + 1 > ARCHIVED_SESSIONS_PAGE_SIZE,
+        );
       } catch (err) {
         console.error("Failed to archive session:", err);
       }
     },
-    [onArchiveSession],
+    [archivedCount, onArchiveSession],
   );
 
   const handleLoadMoreArchivedSessions = useCallback(() => {
@@ -449,52 +450,22 @@ export function InboxSidebar({
 
   const closeRenameDialog = useCallback(() => {
     setRenameDialogSession(null);
-    setRenameTitle("");
-    setRenaming(false);
   }, []);
 
   const handleOpenRenameDialog = useCallback((session: SessionWithUnread) => {
     setRenameDialogSession(session);
-    setRenameTitle(session.title);
   }, []);
 
-  const handleRenameSubmit = useCallback(async () => {
-    if (!renameDialogSession) {
-      return;
-    }
-
-    const nextTitle = getValidRenameTitle({
-      draftTitle: renameTitle,
-      originalTitle: renameDialogSession.title,
-    });
-    if (!nextTitle) {
-      closeRenameDialog();
-      return;
-    }
-
-    setRenaming(true);
-    try {
-      await onRenameSession(renameDialogSession.id, nextTitle);
+  const handleRenameArchivedSession = useCallback(
+    (sessionId: string, title: string) => {
       setArchivedSessions((current) =>
         current.map((session) =>
-          session.id === renameDialogSession.id
-            ? { ...session, title: nextTitle }
-            : session,
+          session.id === sessionId ? { ...session, title } : session,
         ),
       );
-      closeRenameDialog();
-    } catch (err) {
-      console.error("Failed to rename session:", err);
-      setRenaming(false);
-    }
-  }, [closeRenameDialog, onRenameSession, renameDialogSession, renameTitle]);
-
-  const isSaveDisabled = isRenameSaveDisabled({
-    renaming,
-    hasTargetSession: Boolean(renameDialogSession),
-    draftTitle: renameTitle,
-    originalTitle: renameDialogSession?.title ?? null,
-  });
+    },
+    [],
+  );
 
   return (
     <>
@@ -507,7 +478,7 @@ export function InboxSidebar({
             type="button"
             variant="ghost"
             size="icon"
-            onClick={() => setNewSessionOpen(true)}
+            onClick={onOpenNewSession}
             className="h-7 w-7"
           >
             <Plus className="h-4 w-4" />
@@ -587,6 +558,7 @@ export function InboxSidebar({
                   key={session.id}
                   session={session}
                   isActive={session.id === activeSessionId}
+                  isPending={session.id === pendingSessionId}
                   onSessionClick={handleSessionClick}
                   onSessionPrefetch={handleSessionPrefetch}
                   onOpenRenameDialog={handleOpenRenameDialog}
@@ -659,58 +631,11 @@ export function InboxSidebar({
         </div>
       ) : null}
 
-      <Dialog
-        open={Boolean(renameDialogSession)}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeRenameDialog();
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit session</DialogTitle>
-            <DialogDescription>
-              Update the session name shown in your sidebar.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void handleRenameSubmit();
-            }}
-            className="space-y-4"
-          >
-            <Input
-              ref={renameInputRef}
-              value={renameTitle}
-              onChange={(e) => setRenameTitle(e.target.value)}
-              placeholder="Session title"
-              maxLength={120}
-              disabled={renaming}
-            />
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={closeRenameDialog}
-                disabled={renaming}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSaveDisabled}>
-                {renaming ? "Saving..." : "Save"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <NewSessionDialog
-        open={newSessionOpen}
-        onOpenChange={setNewSessionOpen}
-        lastRepo={lastRepo}
-        createSession={createSession}
+      <InboxSidebarRenameDialog
+        session={renameDialogSession}
+        onClose={closeRenameDialog}
+        onRenameSession={onRenameSession}
+        onRenamed={handleRenameArchivedSession}
       />
     </>
   );
