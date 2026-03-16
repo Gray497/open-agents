@@ -1,13 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import * as path from "path";
-import {
-  isPathWithinDirectory,
-  getSandbox,
-  getApprovalContext,
-  shouldAutoApprove,
-} from "./utils";
-import type { ApprovalRule } from "../types";
+import { isPathWithinDirectory, getSandbox, getSandboxContext } from "./utils";
 
 const TIMEOUT_MS = 120_000;
 
@@ -51,24 +45,6 @@ function cwdIsOutsideWorkingDirectory(
   return !isPathWithinDirectory(absoluteCwd, workingDirectory);
 }
 
-/**
- * Check if a command matches any command-prefix approval rules.
- */
-function commandMatchesApprovalRule(
-  command: string,
-  approvalRules: ApprovalRule[],
-): boolean {
-  const trimmedCommand = command.trim();
-  for (const rule of approvalRules) {
-    if (rule.type === "command-prefix" && rule.tool === "bash") {
-      if (trimmedCommand.startsWith(rule.prefix)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 // Read-only commands that are safe to run without approval
 const SAFE_COMMAND_PREFIXES = [
   "ls",
@@ -95,24 +71,15 @@ const SAFE_COMMAND_PREFIXES = [
 
 // Commands that should always require approval
 const DANGEROUS_COMMAND_PATTERNS = [
-  /\brm\b/,
-  /\bmv\b/,
-  /\bcp\b/,
-  /\bmkdir\b/,
-  /\btouch\b/,
-  /\bchmod\b/,
-  /\bchown\b/,
+  /\brm\s+-rf\b/,
+  /\brm\s+-fr\b/,
   /\bsudo\b/,
-  /\bgit\s+(push|commit|add|reset|checkout|merge|rebase|stash)/,
+  /\bgit\s+(push|commit|reset|checkout|merge|rebase|stash)/,
   /\bnpm\s+(install|uninstall|publish)/,
   /\bpnpm\s+(install|uninstall|publish)/,
   /\byarn\s+(add|remove|publish)/,
   /\bbun\s+(add|remove|install)/,
   /\bpip\s+install/,
-  />/, // redirects
-  /\|/, // pipes (could be dangerous)
-  /&&/, // command chaining
-  /;/, // command chaining
 ];
 
 /**
@@ -143,40 +110,19 @@ export function commandNeedsApproval(command: string): boolean {
 export const bashTool = (options?: ToolOptions) =>
   tool({
     needsApproval: async (args, { experimental_context }) => {
-      const ctx = getApprovalContext(experimental_context, "bash");
-      const { approval } = ctx;
+      const ctx = getSandboxContext(experimental_context, "bash");
 
-      // Background and delegated modes auto-approve all operations
-      if (shouldAutoApprove(approval)) {
-        return false;
-      }
-
-      // Type guard narrowed approval to interactive mode
-      // Check if command matches any saved session rules
-      if (commandMatchesApprovalRule(args.command, approval.sessionRules)) {
-        return false;
-      }
-
-      // Need approval if cwd is outside working directory
       if (cwdIsOutsideWorkingDirectory(args.cwd, ctx.workingDirectory)) {
         return true;
       }
 
-      // Auto-approve all bash commands when autoApprove is "all"
-      if (approval.autoApprove === "all") {
-        return false;
-      }
-
-      // Check command safety
       if (commandNeedsApproval(args.command)) {
-        // If command is dangerous, check user's approval setting
         if (typeof options?.needsApproval === "function") {
           return options.needsApproval(args);
         }
         return options?.needsApproval ?? true;
       }
 
-      // Command is safe - no approval needed
       return false;
     },
     description: `Execute a bash command in the user's shell (non-interactive).
@@ -220,7 +166,7 @@ EXAMPLES:
 - Start a dev server: command: "npm run dev", detached: true`,
     inputSchema: bashInputSchema,
     execute: async ({ command, cwd, detached }, { experimental_context }) => {
-      const sandbox = getSandbox(experimental_context, "bash");
+      const sandbox = await getSandbox(experimental_context, "bash");
       const workingDirectory = sandbox.workingDirectory;
 
       // Resolve the working directory

@@ -1,4 +1,3 @@
-import type { Sandbox } from "@open-harness/sandbox";
 import type { LanguageModel } from "ai";
 import { gateway, stepCountIs, ToolLoopAgent } from "ai";
 import { z } from "zod";
@@ -6,6 +5,7 @@ import { bashTool } from "../tools/bash";
 import { globTool } from "../tools/glob";
 import { grepTool } from "../tools/grep";
 import { readFileTool } from "../tools/read";
+import type { SandboxExecutionContext } from "../types";
 
 const EXPLORER_SYSTEM_PROMPT = `You are an explorer agent - a fast, read-only subagent specialized for exploring codebases.
 
@@ -62,7 +62,7 @@ const callOptionsSchema = z.object({
     .string()
     .describe("Detailed instructions for the exploration"),
   sandbox: z
-    .custom<Sandbox>()
+    .custom<SandboxExecutionContext["sandbox"]>()
     .describe("Sandbox for file system and shell operations"),
   model: z.custom<LanguageModel>().describe("Language model for this subagent"),
 });
@@ -73,7 +73,6 @@ export const explorerSubagent = new ToolLoopAgent({
   model: gateway("anthropic/claude-haiku-4.5"),
   instructions: EXPLORER_SYSTEM_PROMPT,
   tools: {
-    // All tools auto-approve in delegated mode (set via prepareCall)
     read: readFileTool(),
     grep: grepTool(),
     glob: globTool(),
@@ -82,6 +81,10 @@ export const explorerSubagent = new ToolLoopAgent({
   stopWhen: stepCountIs(100),
   callOptionsSchema,
   prepareCall: ({ options, ...settings }) => {
+    if (!options) {
+      throw new Error("Explorer subagent requires task call options.");
+    }
+
     const sandbox = options.sandbox;
     const model = options.model ?? settings.model;
     return {
@@ -104,7 +107,6 @@ ${options.instructions}
 - Your final message MUST include both a **Summary** of what you searched AND the **Answer** to the task`,
       experimental_context: {
         sandbox,
-        approval: { type: "delegated" },
         model,
       },
     };

@@ -2,7 +2,6 @@ import { gateway } from "@open-harness/agent";
 import {
   convertToModelMessages,
   type GatewayModelId,
-  type LanguageModel,
   type LanguageModelUsage,
 } from "ai";
 import { nanoid } from "nanoid";
@@ -27,11 +26,7 @@ import {
   requireOwnedSessionChat,
 } from "./_lib/chat-context";
 import { handleChatStreamFinish } from "./_lib/post-finish";
-import {
-  buildCompactionContext,
-  parseChatRequestBody,
-  requireChatIdentifiers,
-} from "./_lib/request";
+import { parseChatRequestBody, requireChatIdentifiers } from "./_lib/request";
 import { createChatRuntime } from "./_lib/runtime";
 import {
   claimStreamOwnership,
@@ -55,7 +50,7 @@ export async function POST(req: Request) {
     return parsedBody.response;
   }
 
-  const { messages, context: requestedCompactionContext } = parsedBody.body;
+  const { messages } = parsedBody.body;
 
   // 2. Require sessionId and chatId to ensure sandbox ownership verification
   const chatIdentifiers = requireChatIdentifiers(parsedBody.body);
@@ -78,6 +73,10 @@ export async function POST(req: Request) {
   }
 
   const { sessionRecord, chat } = chatContext;
+  const activeSandboxState = sessionRecord.sandboxState;
+  if (!activeSandboxState) {
+    throw new Error("Sandbox not initialized");
+  }
 
   // Refresh lifecycle activity timestamps immediately so that any running
   // lifecycle workflow sees that the sandbox is in active use. Without this,
@@ -185,23 +184,30 @@ export async function POST(req: Request) {
     ? DEFAULT_MODEL_ID
     : mainSelection.resolvedModelId;
 
-  let model;
+  let model: GatewayModelId;
+  let modelProviderOptions: typeof mainSelection.providerOptionsByProvider;
   try {
-    model = gateway(mainResolvedModelId as GatewayModelId, {
-      providerOptionsOverrides: mainSelection.isMissingVariant
-        ? undefined
-        : mainSelection.providerOptionsByProvider,
+    model = mainResolvedModelId as GatewayModelId;
+    modelProviderOptions = mainSelection.isMissingVariant
+      ? undefined
+      : mainSelection.providerOptionsByProvider;
+    gateway(model, {
+      providerOptionsOverrides: modelProviderOptions,
     });
   } catch (error) {
     console.error(
       `Invalid model ID "${mainResolvedModelId}", falling back to default:`,
       error,
     );
-    model = gateway(DEFAULT_MODEL_ID as GatewayModelId);
+    model = DEFAULT_MODEL_ID as GatewayModelId;
+    modelProviderOptions = undefined;
   }
 
   // Resolve subagent model from user preferences (if configured)
-  let subagentModel: LanguageModel | undefined;
+  let subagentModel: GatewayModelId | undefined;
+  let subagentModelProviderOptions:
+    | ReturnType<typeof resolveModelSelection>["providerOptionsByProvider"]
+    | undefined;
   if (preferences?.defaultSubagentModelId) {
     const subagentSelection = resolveModelSelection(
       preferences.defaultSubagentModelId,
@@ -219,20 +225,17 @@ export async function POST(req: Request) {
       : subagentSelection.resolvedModelId;
 
     try {
-      subagentModel = gateway(subagentResolvedModelId as GatewayModelId, {
-        providerOptionsOverrides: subagentSelection.isMissingVariant
-          ? undefined
-          : subagentSelection.providerOptionsByProvider,
+      subagentModel = subagentResolvedModelId as GatewayModelId;
+      subagentModelProviderOptions = subagentSelection.isMissingVariant
+        ? undefined
+        : subagentSelection.providerOptionsByProvider;
+      gateway(subagentModel, {
+        providerOptionsOverrides: subagentModelProviderOptions,
       });
     } catch (error) {
       console.error("Failed to resolve subagent model preference:", error);
     }
   }
-
-  const compactionContext = buildCompactionContext(
-    requestedCompactionContext,
-    messages,
-  );
 
   // Use Redis stop signals as the sole cancellation mechanism for generation.
   // We intentionally do not bind `req.signal` so a transient client disconnect
@@ -244,16 +247,24 @@ export async function POST(req: Request) {
     result = await webAgent.stream({
       messages: modelMessages,
       options: {
-        sandbox,
-        model,
-        subagentModel,
-        context: compactionContext,
-        // TODO: consider enabling approvals for non-cloud-sandbox environments
-        approval: {
-          type: "interactive",
-          autoApprove: "all",
-          sessionRules: [],
+        sandbox: {
+          state: activeSandboxState,
+          workingDirectory: sandbox.workingDirectory,
+          currentBranch: sandbox.currentBranch,
+          environmentDetails: sandbox.environmentDetails,
         },
+        model: {
+          id: model,
+          providerOptionsOverrides: modelProviderOptions,
+        },
+        ...(subagentModel
+          ? {
+              subagentModel: {
+                id: subagentModel,
+                providerOptionsOverrides: subagentModelProviderOptions,
+              },
+            }
+          : {}),
         ...(skills.length > 0 && { skills }),
       },
       abortSignal: abortLifecycle.controller.signal,

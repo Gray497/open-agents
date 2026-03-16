@@ -175,7 +175,10 @@ export async function PUT(req: Request) {
   }
   if (sessionRecord.sandboxState.type !== "vercel") {
     return Response.json(
-      { error: "Snapshot restoration is only supported for Vercel sandboxes" },
+      {
+        error:
+          "Snapshot restoration is only supported for the current cloud sandbox provider",
+      },
       { status: 400 },
     );
   }

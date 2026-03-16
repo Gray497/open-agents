@@ -1,27 +1,50 @@
-import { mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
-import { askUserQuestionTool } from "./ask-user-question";
-import { bashTool, commandNeedsApproval } from "./bash";
-import { webFetchTool } from "./fetch";
-import { globTool } from "./glob";
-import { grepTool } from "./grep";
-import { readFileTool } from "./read";
-import { skillTool } from "./skill";
-import { taskTool } from "./task";
-import { todoWriteTool } from "./todo";
-import { editFileTool, writeFileTool } from "./write";
 import type { ToolNeedsApprovalFunction } from "./utils";
 
+const sandboxRegistry = new Map<string, Record<string, unknown>>();
+
+mock.module("@open-harness/sandbox", () => ({
+  connectSandbox: async (state: { sandboxId?: string }) => {
+    if (!state.sandboxId) {
+      throw new Error("Missing sandboxId in test sandbox state.");
+    }
+
+    const sandbox = sandboxRegistry.get(state.sandboxId);
+    if (!sandbox) {
+      throw new Error(`Unknown test sandbox: ${state.sandboxId}`);
+    }
+
+    return sandbox;
+  },
+}));
+
+const { askUserQuestionTool } = await import("./ask-user-question");
+const { bashTool, commandNeedsApproval } = await import("./bash");
+const { webFetchTool } = await import("./fetch");
+const { globTool } = await import("./glob");
+const { grepTool } = await import("./grep");
+const { readFileTool } = await import("./read");
+const { skillTool } = await import("./skill");
+const { taskTool } = await import("./task");
+const { todoWriteTool } = await import("./todo");
+const { editFileTool, writeFileTool } = await import("./write");
+
 function createContext(sandbox: Record<string, unknown>) {
+  const sandboxId = `sandbox-${sandboxRegistry.size + 1}`;
+  sandboxRegistry.set(sandboxId, sandbox);
+
   return {
-    sandbox,
-    approval: {
-      type: "interactive" as const,
-      autoApprove: "off" as const,
-      sessionRules: [],
+    sandbox: {
+      state: { type: "vercel" as const, sandboxId },
+      workingDirectory:
+        typeof sandbox.workingDirectory === "string"
+          ? sandbox.workingDirectory
+          : "/repo",
     },
+    approval: {},
     model: "test-model",
   };
 }
@@ -308,13 +331,47 @@ describe("tools execute behavior", () => {
     expect(commandNeedsApproval("ls -la")).toBe(false);
     expect(commandNeedsApproval("git status --short")).toBe(false);
     expect(commandNeedsApproval("npm install")).toBe(true);
-    expect(commandNeedsApproval("echo hi | wc -c")).toBe(true);
     expect(commandNeedsApproval("custom-command --help")).toBe(true);
+  });
+
+  test("bashTool needsApproval blocks dangerous commands by default", async () => {
+    const baseContext = {
+      sandbox: { workingDirectory: "/repo" },
+      model: "test-model",
+    };
+
+    const safeCommand = await getNeedsApprovalResult(
+      bashTool().needsApproval,
+      { command: "ls -la" },
+      {
+        ...baseContext,
+      },
+    );
+    expect(safeCommand).toBe(false);
+
+    const dangerousCommand = await getNeedsApprovalResult(
+      bashTool().needsApproval,
+      { command: "rm -rf tmp" },
+      {
+        ...baseContext,
+      },
+    );
+    expect(dangerousCommand).toBe(true);
+
+    const allowedBuildCommand = await getNeedsApprovalResult(
+      bashTool().needsApproval,
+      { command: "bun run ci" },
+      {
+        ...baseContext,
+      },
+    );
+    expect(allowedBuildCommand).toBe(true);
   });
 
   const originalFetch = globalThis.fetch;
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    sandboxRegistry.clear();
   });
 
   test("webFetchTool truncates oversized response bodies", async () => {
@@ -452,72 +509,7 @@ describe("tools execute behavior", () => {
     });
   });
 
-  test("skillTool needsApproval respects auto-approve and session skill rules", async () => {
-    const baseContext = {
-      sandbox: { workingDirectory: "/repo" },
-      model: "test-model",
-    };
-
-    const defaultNeedsApproval = await getNeedsApprovalResult(
-      skillTool.needsApproval,
-      { skill: "commit", args: "" },
-      {
-        ...baseContext,
-        approval: {
-          type: "interactive",
-          autoApprove: "off",
-          sessionRules: [],
-        },
-      },
-    );
-    expect(defaultNeedsApproval).toBe(true);
-
-    const autoApproved = await getNeedsApprovalResult(
-      skillTool.needsApproval,
-      { skill: "commit", args: "" },
-      {
-        ...baseContext,
-        approval: {
-          type: "interactive",
-          autoApprove: "all",
-          sessionRules: [],
-        },
-      },
-    );
-    expect(autoApproved).toBe(false);
-
-    const matchedRule = await getNeedsApprovalResult(
-      skillTool.needsApproval,
-      { skill: "CoMmIt", args: "" },
-      {
-        ...baseContext,
-        approval: {
-          type: "interactive",
-          autoApprove: "off",
-          sessionRules: [
-            {
-              type: "skill",
-              tool: "skill",
-              skillName: "commit",
-            },
-          ],
-        },
-      },
-    );
-    expect(matchedRule).toBe(false);
-  });
-
-  test("taskTool needsApproval requires approval for executor in interactive mode", async () => {
-    const baseContext = {
-      sandbox: { workingDirectory: "/repo" },
-      model: "test-model",
-      approval: {
-        type: "interactive" as const,
-        autoApprove: "off" as const,
-        sessionRules: [],
-      },
-    };
-
+  test("taskTool exposes both subagent types without approval gates", async () => {
     const explorerNeedsApproval = await getNeedsApprovalResult(
       taskTool.needsApproval,
       {
@@ -525,7 +517,11 @@ describe("tools execute behavior", () => {
         task: "Find usages",
         instructions: "Search for helper usage",
       },
-      baseContext,
+      {
+        sandbox: { workingDirectory: "/repo" },
+        model: "test-model",
+        approval: {},
+      },
     );
     expect(explorerNeedsApproval).toBe(false);
 
@@ -536,47 +532,13 @@ describe("tools execute behavior", () => {
         task: "Apply changes",
         instructions: "Update files",
       },
-      baseContext,
-    );
-    expect(executorNeedsApproval).toBe(true);
-
-    const approvedByRule = await getNeedsApprovalResult(
-      taskTool.needsApproval,
       {
-        subagentType: "executor",
-        task: "Apply changes",
-        instructions: "Update files",
-      },
-      {
-        ...baseContext,
-        approval: {
-          type: "interactive",
-          autoApprove: "off",
-          sessionRules: [
-            {
-              type: "subagent-type",
-              tool: "task",
-              subagentType: "executor",
-            },
-          ],
-        },
+        sandbox: { workingDirectory: "/repo" },
+        model: "test-model",
+        approval: {},
       },
     );
-    expect(approvedByRule).toBe(false);
-
-    const backgroundApproval = await getNeedsApprovalResult(
-      taskTool.needsApproval,
-      {
-        subagentType: "executor",
-        task: "Apply changes",
-        instructions: "Update files",
-      },
-      {
-        ...baseContext,
-        approval: { type: "background" },
-      },
-    );
-    expect(backgroundApproval).toBe(false);
+    expect(executorNeedsApproval).toBe(false);
   });
 
   test("todoWriteTool returns updated todo list metadata", async () => {

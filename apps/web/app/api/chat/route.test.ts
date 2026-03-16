@@ -107,7 +107,7 @@ mock.module("@open-harness/sandbox", () => ({
     workingDirectory: "/vercel/sandbox",
     exec: async () => ({ success: true, stdout: "", stderr: "" }),
     getState: () => ({
-      type: "vercel" as const,
+      type: "vercel",
       sandboxId: "sandbox-1",
       expiresAt: Date.now() + 60_000,
     }),
