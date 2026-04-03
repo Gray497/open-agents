@@ -1,17 +1,6 @@
 {
   "version": "1.0.0",
   "steps": {
-    "app/workflows/sandbox-lifecycle.ts": {
-      "clearLifecycleRunIdIfOwned": {
-        "stepId": "step//./app/workflows/sandbox-lifecycle//clearLifecycleRunIdIfOwned"
-      },
-      "computeLifecycleWakeDecision": {
-        "stepId": "step//./app/workflows/sandbox-lifecycle//computeLifecycleWakeDecision"
-      },
-      "runLifecycleEvaluation": {
-        "stepId": "step//./app/workflows/sandbox-lifecycle//runLifecycleEvaluation"
-      }
-    },
     "node_modules/workflow/dist/stdlib.js": {
       "fetch": {
         "stepId": "step//workflow@4.2.0-beta.74//fetch"
@@ -52,6 +41,17 @@
       },
       "runAutoCreatePrStep": {
         "stepId": "step//./app/workflows/chat-post-finish//runAutoCreatePrStep"
+      }
+    },
+    "app/workflows/sandbox-lifecycle.ts": {
+      "clearLifecycleRunIdIfOwned": {
+        "stepId": "step//./app/workflows/sandbox-lifecycle//clearLifecycleRunIdIfOwned"
+      },
+      "computeLifecycleWakeDecision": {
+        "stepId": "step//./app/workflows/sandbox-lifecycle//computeLifecycleWakeDecision"
+      },
+      "runLifecycleEvaluation": {
+        "stepId": "step//./app/workflows/sandbox-lifecycle//runLifecycleEvaluation"
       }
     },
     "app/workflows/chat.ts": {
