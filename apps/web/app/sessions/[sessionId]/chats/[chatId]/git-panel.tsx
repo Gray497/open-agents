@@ -894,11 +894,10 @@ function InlineMergePanel({
     }
   };
 
+  const isInitialReadinessLoading = isLoadingReadiness && !readiness;
+
   const canForce =
-    readiness !== null &&
-    !readiness.canMerge &&
-    readiness.pr !== null &&
-    !isLoadingReadiness;
+    readiness !== null && !readiness.canMerge && readiness.pr !== null;
 
   const handleForceClick = () => {
     if (forceConfirming) {
@@ -920,7 +919,7 @@ function InlineMergePanel({
   const allowedMethods = readiness?.allowedMethods ?? ["squash"];
   const hasMultipleMethods = allowedMethods.length > 1;
   const mergeDisabled =
-    isSubmitting || isLoadingReadiness || !readiness || !readiness.pr;
+    isSubmitting || isInitialReadinessLoading || !readiness || !readiness.pr;
 
   const prTitle = readiness?.pr?.title ?? null;
   const prBody = readiness?.pr?.body ?? null;
@@ -957,7 +956,7 @@ function InlineMergePanel({
           void loadReadiness();
         }}
         isRefreshing={isLoadingReadiness}
-        isLoading={isLoadingReadiness && !readiness}
+        isLoading={isInitialReadinessLoading}
         onFixChecks={onFixChecks}
       />
 
@@ -972,7 +971,7 @@ function InlineMergePanel({
         <Switch
           checked={deleteBranch}
           onCheckedChange={setDeleteBranch}
-          disabled={isSubmitting || isLoadingReadiness}
+          disabled={isSubmitting || isInitialReadinessLoading}
         />
       </div>
 
@@ -1054,7 +1053,7 @@ function InlineMergePanel({
           variant="destructive"
           className="w-full"
           onClick={handleForceClick}
-          disabled={isSubmitting || isLoadingReadiness || !readiness?.pr}
+          disabled={isSubmitting || !readiness?.pr}
         >
           {isSubmitting ? (
             <>

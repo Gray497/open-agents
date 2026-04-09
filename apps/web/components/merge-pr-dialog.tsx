@@ -251,12 +251,11 @@ export function MergePrDialog({
     }
   };
 
+  const isInitialReadinessLoading = isLoadingReadiness && !readiness;
+
   // Whether the user can bypass failing checks via force merge
   const canForce =
-    readiness !== null &&
-    !readiness.canMerge &&
-    readiness.pr !== null &&
-    !isLoadingReadiness;
+    readiness !== null && !readiness.canMerge && readiness.pr !== null;
 
   const handleForceClick = () => {
     if (forceConfirming) {
@@ -280,7 +279,7 @@ export function MergePrDialog({
   const allowedMethods = readiness?.allowedMethods ?? ["squash"];
   const hasMultipleMethods = allowedMethods.length > 1;
   const mergeDisabled =
-    isSubmitting || isLoadingReadiness || !readiness || !readiness.pr;
+    isSubmitting || isInitialReadinessLoading || !readiness || !readiness.pr;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -318,7 +317,7 @@ export function MergePrDialog({
               void loadReadiness();
             }}
             isRefreshing={isLoadingReadiness}
-            isLoading={isLoadingReadiness && !readiness}
+            isLoading={isInitialReadinessLoading}
             onFixChecks={onFixChecks}
           />
 
@@ -332,7 +331,7 @@ export function MergePrDialog({
             <Switch
               checked={deleteBranch}
               onCheckedChange={setDeleteBranch}
-              disabled={isSubmitting || isLoadingReadiness}
+              disabled={isSubmitting || isInitialReadinessLoading}
             />
           </div>
 
@@ -416,11 +415,7 @@ export function MergePrDialog({
               variant="destructive"
               onClick={handleForceClick}
               disabled={
-                isSubmitting ||
-                isLoadingReadiness ||
-                !readiness ||
-                !canForce ||
-                !readiness.pr
+                isSubmitting || !readiness || !canForce || !readiness.pr
               }
             >
               {isSubmitting ? (
