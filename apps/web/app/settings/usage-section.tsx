@@ -1,5 +1,6 @@
 "use client";
 
+import { formatTokens } from "@open-harness/shared";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import type { DateRange } from "react-day-picker";
@@ -72,13 +73,6 @@ interface CostEstimateSummary {
   amount: number;
   pricedTokens: number;
   totalTokens: number;
-}
-
-function formatTokens(n: number) {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
 }
 
 function formatDateRangeLabel(range: DateRange | undefined) {

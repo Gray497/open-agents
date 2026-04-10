@@ -1,6 +1,7 @@
 "use client";
 
 import type { AskUserQuestionInput } from "@open-harness/agent";
+import { formatTokens } from "@open-harness/shared";
 import {
   isReasoningUIPart,
   isToolUIPart,
@@ -392,13 +393,6 @@ function isSandboxValid(sandboxInfo: SandboxInfo | null): boolean {
   if (sandboxInfo.timeout === null) return true; // No timeout = always valid
   const expiresAt = sandboxInfo.createdAt + sandboxInfo.timeout;
   return Date.now() < expiresAt;
-}
-
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000) {
-    return `${(tokens / 1000).toFixed(1)}k`;
-  }
-  return tokens.toString();
 }
 
 function formatUsd(amount: number): string {
